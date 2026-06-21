@@ -3,6 +3,8 @@ package org.example;
 import org.example.Dao.UserDao;
 import org.example.Dao.UserDaoImplements;
 import org.example.entity.User;
+import org.example.service.UserService;
+import org.example.service.UserServiceImplements;
 import org.example.util.HibernateUtil;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -12,6 +14,7 @@ import java.util.Scanner;
 public class Main {
     private static final Logger logger = LoggerFactory.getLogger(Main.class);
     private static final UserDao userDao = new UserDaoImplements();
+    private static final UserService userService = new UserServiceImplements(userDao);
     private static final Scanner scanner = new Scanner(System.in);
 
     public static void main(String[] args) {
@@ -72,16 +75,17 @@ public class Main {
             System.out.print("Age: ");
             int age = Integer.parseInt(scanner.nextLine());
 
-            User user = new User(name, email, age);
-            userDao.save(user);
+            User user = userService.createUser(name, email, age);
             System.out.println("User created");
         } catch (NumberFormatException e) {
             System.out.println("Age must be a number");
+        } catch (IllegalArgumentException e) {
+            System.out.println("Validation error: " + e.getMessage());
         }
     }
 
     private static void showAllUsers() {
-        List<User> users = userDao.findAll();
+        List<User> users = userService.getAllUsers();
         if (users.isEmpty()) {
             System.out.println("User list is empty");
         } else {
@@ -95,12 +99,14 @@ public class Main {
             System.out.print("Enter ID: ");
             Long id = Long.parseLong(scanner.nextLine());
 
-            userDao.findById(id).ifPresentOrElse(
+            userService.getUserById(id).ifPresentOrElse(
                     user -> System.out.println("Found: " + user),
                     () -> System.out.println("User with ID " + id + " not found")
             );
         } catch (NumberFormatException e) {
             System.out.println("ID must be a number");
+        } catch (IllegalArgumentException e) {
+            System.out.println("Error " + e.getMessage());
         }
     }
 
@@ -109,26 +115,17 @@ public class Main {
             System.out.print("User ID for update: ");
             Long id = Long.parseLong(scanner.nextLine());
 
-            userDao.findById(id).ifPresentOrElse(user -> {
-                System.out.println("Old user info: " + user);
-
-                System.out.print("New name (Enter — skip): ");
-                String newName = scanner.nextLine();
-                if (!newName.isEmpty()) user.setName(newName);
-
-                System.out.print("New email (Enter — skip): ");
-                String newEmail = scanner.nextLine();
-                if (!newEmail.isEmpty()) user.setEmail(newEmail);
-
-                System.out.print("New возраст (Enter — skip): ");
-                String newAge = scanner.nextLine();
-                if (!newAge.isEmpty()) user.setAge(Integer.parseInt(newAge));
-
-                userDao.update(user);
-                System.out.println("Updated");
-            }, () -> System.out.println("User not found"));
-        } catch (NumberFormatException e) {
-            System.out.println("Incorrect enter");
+            System.out.print("New name (Enter — skip): ");
+            String name = scanner.nextLine();
+            System.out.print("New email (Enter — skip): ");
+            String email = scanner.nextLine();
+            System.out.print("New возраст (Enter — skip): ");
+            String ageStr = scanner.nextLine();
+            Integer age = ageStr.isBlank() ? null : Integer.parseInt(ageStr);
+            User updated = userService.updateUser(id, name, email, age);
+            System.out.println("Updated");
+        } catch (Exception e) {
+            System.out.println("Error " + e.getMessage());
         }
     }
 
@@ -136,10 +133,13 @@ public class Main {
         try {
             System.out.print("ID for delete: ");
             Long id = Long.parseLong(scanner.nextLine());
-            userDao.delete(id);
+            if (userService.deleteUser(id)) {
             System.out.println("User deleted");
-        } catch (NumberFormatException e) {
-            System.out.println("ID must be a number");
+            } else {
+                System.out.println("User not found");
+            }
+        } catch (Exception e) {
+            System.out.println("Error " + e.getMessage());
         }
     }
 }

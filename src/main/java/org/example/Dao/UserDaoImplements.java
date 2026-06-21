@@ -3,16 +3,23 @@ package org.example.Dao;
 import org.example.entity.User;
 import org.example.util.HibernateUtil;
 import org.hibernate.Session;
+import org.hibernate.SessionFactory;
 import org.hibernate.Transaction;
 import org.hibernate.exception.ConstraintViolationException;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-
 import java.util.List;
 import java.util.Optional;
 
 public class UserDaoImplements implements UserDao {
     private static final Logger logger = LoggerFactory.getLogger(UserDaoImplements.class);
+    private final SessionFactory sessionFactory;
+    public UserDaoImplements() {
+        this.sessionFactory = HibernateUtil.getSessionFactory();
+    }
+    public UserDaoImplements(SessionFactory sessionFactory) {
+        this.sessionFactory = sessionFactory;
+    }
 
     @Override
     public void save(User user) {
