@@ -3,6 +3,7 @@ package org.example.service;
 import org.example.dto.UserRequest;
 import org.example.dto.UserResponse;
 import org.example.entity.User;
+import org.example.kafka.UserEventProducer;
 import org.example.mapper.UserMapper;
 import org.example.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -18,6 +19,7 @@ public class UserServiceImplements implements UserService {
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
+    private final UserEventProducer eventProducer;
 
     @Override
     @Transactional
@@ -28,6 +30,8 @@ public class UserServiceImplements implements UserService {
 
         User user = userMapper.toEntity(request);
         User saved = userRepository.save(user);
+        // Отправляем событие в Kafka
+        eventProducer.sendUserCreatedEvent(saved.getEmail(), saved.getId());
         return userMapper.toResponse(saved);
     }
 
@@ -59,9 +63,12 @@ public class UserServiceImplements implements UserService {
     @Override
     @Transactional
     public void deleteUser(Long id) {
-        if (!userRepository.existsById(id)) {
-            throw new RuntimeException("Пользователь не найден: " + id);
-        }
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Пользователь не найден: " + id));
+        String email = user.getEmail();
+
         userRepository.deleteById(id);
+        // Отправляем событие после успешного удаления
+        eventProducer.sendUserDeletedEvent(email, id);
     }
 }
