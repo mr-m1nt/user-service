@@ -1,10 +1,10 @@
 package org.example.service;
 
-import com.example.userservice.dto.UserRequest;
-import com.example.userservice.dto.UserResponse;
-import com.example.userservice.entity.User;
-import com.example.userservice.mapper.UserMapper;
-import com.example.userservice.repository.UserRepository;
+import org.example.dto.UserRequest;
+import org.example.dto.UserResponse;
+import org.example.entity.User;
+import org.example.mapper.UserMapper;
+import org.example.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.DisplayName;
 import org.junit.jupiter.api.Nested;
@@ -36,7 +36,7 @@ class UserServiceTest {
     private UserMapper userMapper;
 
     @InjectMocks
-    private UserService userService;
+    private UserServiceImplements userService;
 
     private User testUser;
     private UserRequest testRequest;
