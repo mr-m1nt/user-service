@@ -1,8 +1,11 @@
 package org.example.service;
 
+import lombok.extern.slf4j.Slf4j;
 import org.example.dto.UserRequest;
 import org.example.dto.UserResponse;
 import org.example.entity.User;
+import org.example.event.UserEvent;
+import org.example.kafka.UserKafkaProducer;
 import org.example.mapper.UserMapper;
 import org.example.repository.UserRepository;
 import lombok.RequiredArgsConstructor;
@@ -14,10 +17,12 @@ import java.util.List;
 @Service
 @RequiredArgsConstructor
 @Transactional(readOnly = true)
+@Slf4j
 public class UserServiceImplements implements UserService {
 
     private final UserRepository userRepository;
     private final UserMapper userMapper;
+    private final UserKafkaProducer kafkaProducer;
 
     @Override
     @Transactional
@@ -28,6 +33,8 @@ public class UserServiceImplements implements UserService {
 
         User user = userMapper.toEntity(request);
         User saved = userRepository.save(user);
+        kafkaProducer.sendEvent(new UserEvent("CREATE", saved.getEmail()));
+        log.info("Событие CREATE отправлено в Kafka для email: {}", saved.getEmail());
         return userMapper.toResponse(saved);
     }
 
@@ -59,9 +66,16 @@ public class UserServiceImplements implements UserService {
     @Override
     @Transactional
     public void deleteUser(Long id) {
-        if (!userRepository.existsById(id)) {
-            throw new RuntimeException("Пользователь не найден: " + id);
-        }
+        // ВАЖНО: сначала находим пользователя, чтобы получить email
+        User user = userRepository.findById(id)
+                .orElseThrow(() -> new RuntimeException("Пользователь не найден: " + id));
+        String email = user.getEmail();  // ← Сохраняем email ДО удаления
+
         userRepository.deleteById(id);
+
+        //ОТПРАВКА СОБЫТИЯ В KAFKA
+        kafkaProducer.sendEvent(new UserEvent("DELETE", email));
+        log.info("Событие DELETE отправлено в Kafka для email: {}", email);
+
     }
 }

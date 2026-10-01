@@ -3,6 +3,8 @@ package org.example.service;
 import org.example.dto.UserRequest;
 import org.example.dto.UserResponse;
 import org.example.entity.User;
+import org.example.event.UserEvent;
+import org.example.kafka.UserKafkaProducer;
 import org.example.mapper.UserMapper;
 import org.example.repository.UserRepository;
 import org.junit.jupiter.api.BeforeEach;
@@ -18,14 +20,14 @@ import java.time.LocalDateTime;
 import java.util.List;
 import java.util.Optional;
 
-import static org.assertj.core.api.Assertions.*;
-import static org.mockito.ArgumentMatchers.*;
-import static org.mockito.Mockito.*;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Unit-тесты для UserService.
- * НЕ используют @SpringBootTest — это чистые unit-тесты с Mockito.
- */
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
+
 @ExtendWith(MockitoExtension.class)
 class UserServiceTest {
 
@@ -34,6 +36,9 @@ class UserServiceTest {
 
     @Mock
     private UserMapper userMapper;
+
+    @Mock
+    private UserKafkaProducer kafkaProducer;
 
     @InjectMocks
     private UserServiceImplements userService;
@@ -44,232 +49,473 @@ class UserServiceTest {
 
     @BeforeEach
     void setUp() {
-        testUser = User.builder()
-                .id(1L)
-                .name("Иван")
-                .email("ivan@test.com")
-                .age(25)
-                .createdAt(LocalDateTime.now())
-                .build();
 
-        testRequest = new UserRequest();
+        testUser =
+                User.builder()
+                        .id(1L)
+                        .name("Иван")
+                        .email("ivan@test.com")
+                        .age(25)
+                        .createdAt(
+                                LocalDateTime.now()
+                        )
+                        .build();
+
+        testRequest =
+                new UserRequest();
+
         testRequest.setName("Иван");
-        testRequest.setEmail("ivan@test.com");
+        testRequest.setEmail(
+                "ivan@test.com"
+        );
         testRequest.setAge(25);
 
-        testResponse = UserResponse.builder()
-                .id(1L)
-                .name("Иван")
-                .email("ivan@test.com")
-                .age(25)
-                .createdAt(testUser.getCreatedAt())
-                .build();
+        testResponse =
+                UserResponse.builder()
+                        .id(1L)
+                        .name("Иван")
+                        .email("ivan@test.com")
+                        .age(25)
+                        .createdAt(
+                                testUser.getCreatedAt()
+                        )
+                        .build();
     }
-
-    // ===== Тесты createUser =====
 
     @Nested
     @DisplayName("createUser")
     class CreateUserTests {
 
         @Test
-        @DisplayName("Должен создать пользователя с валидными данными")
         void shouldCreateUserSuccessfully() {
-            // given
-            when(userRepository.existsByEmail(testRequest.getEmail())).thenReturn(false);
-            when(userMapper.toEntity(testRequest)).thenReturn(testUser);
-            when(userRepository.save(any(User.class))).thenReturn(testUser);
-            when(userMapper.toResponse(testUser)).thenReturn(testResponse);
 
-            // when
-            UserResponse result = userService.createUser(testRequest);
+            when(
+                    userRepository.existsByEmail(
+                            testRequest.getEmail()
+                    )
+            ).thenReturn(false);
 
-            // then
-            assertThat(result).isNotNull();
-            assertThat(result.getName()).isEqualTo("Иван");
-            assertThat(result.getEmail()).isEqualTo("ivan@test.com");
+            when(
+                    userMapper.toEntity(
+                            testRequest
+                    )
+            ).thenReturn(testUser);
 
-            verify(userRepository).existsByEmail(testRequest.getEmail());
-            verify(userMapper).toEntity(testRequest);
-            verify(userRepository).save(any(User.class));
-            verify(userMapper).toResponse(testUser);
+            when(
+                    userRepository.save(
+                            any(User.class)
+                    )
+            ).thenReturn(testUser);
+
+            when(
+                    userMapper.toResponse(
+                            testUser
+                    )
+            ).thenReturn(testResponse);
+
+            UserResponse result =
+                    userService.createUser(
+                            testRequest
+                    );
+
+            assertThat(result)
+                    .isNotNull();
+
+            assertThat(result.getName())
+                    .isEqualTo("Иван");
+
+            assertThat(result.getEmail())
+                    .isEqualTo(
+                            "ivan@test.com"
+                    );
+
+            verify(userRepository)
+                    .save(testUser);
+
+            verify(kafkaProducer)
+                    .sendEvent(
+                            new UserEvent(
+                                    "CREATE",
+                                    "ivan@test.com"
+                            )
+                    );
         }
 
         @Test
-        @DisplayName("Должен выбросить исключение, если email уже занят")
         void shouldThrowExceptionWhenEmailExists() {
-            // given
-            when(userRepository.existsByEmail(testRequest.getEmail())).thenReturn(true);
 
-            // when & then
-            assertThatThrownBy(() -> userService.createUser(testRequest))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("Email уже занят");
+            when(
+                    userRepository.existsByEmail(
+                            testRequest.getEmail()
+                    )
+            ).thenReturn(true);
 
-            // Проверяем, что save НЕ вызывался
-            verify(userRepository, never()).save(any());
-            verify(userMapper, never()).toEntity(any());
+            assertThatThrownBy(
+                    () ->
+                            userService.createUser(
+                                    testRequest
+                            )
+            )
+                    .isInstanceOf(
+                            IllegalArgumentException.class
+                    )
+                    .hasMessageContaining(
+                            "Email уже занят"
+                    );
+
+            verify(
+                    userRepository,
+                    never()
+            ).save(any());
+
+            verify(
+                    kafkaProducer,
+                    never()
+            ).sendEvent(any());
         }
     }
-
-    // ===== Тесты getUserById =====
 
     @Nested
     @DisplayName("getUserById")
     class GetUserByIdTests {
 
         @Test
-        @DisplayName("Должен вернуть пользователя по ID")
         void shouldReturnUserWhenFound() {
-            // given
-            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
-            when(userMapper.toResponse(testUser)).thenReturn(testResponse);
 
-            // when
-            UserResponse result = userService.getUserById(1L);
+            when(
+                    userRepository.findById(1L)
+            ).thenReturn(
+                    Optional.of(testUser)
+            );
 
-            // then
-            assertThat(result).isNotNull();
-            assertThat(result.getId()).isEqualTo(1L);
-            verify(userRepository).findById(1L);
+            when(
+                    userMapper.toResponse(
+                            testUser
+                    )
+            ).thenReturn(testResponse);
+
+            UserResponse result =
+                    userService.getUserById(1L);
+
+            assertThat(result)
+                    .isNotNull();
+
+            assertThat(result.getId())
+                    .isEqualTo(1L);
+
+            verify(userRepository)
+                    .findById(1L);
         }
 
         @Test
-        @DisplayName("Должен выбросить исключение, если пользователь не найден")
         void shouldThrowExceptionWhenUserNotFound() {
-            // given
-            when(userRepository.findById(999L)).thenReturn(Optional.empty());
 
-            // when & then
-            assertThatThrownBy(() -> userService.getUserById(999L))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("Пользователь не найден");
+            when(
+                    userRepository.findById(
+                            999L
+                    )
+            ).thenReturn(
+                    Optional.empty()
+            );
 
-            verify(userMapper, never()).toResponse(any());
+            assertThatThrownBy(
+                    () ->
+                            userService
+                                    .getUserById(
+                                            999L
+                                    )
+            )
+                    .isInstanceOf(
+                            RuntimeException.class
+                    )
+                    .hasMessageContaining(
+                            "Пользователь не найден"
+                    );
+
+            verify(
+                    userMapper,
+                    never()
+            ).toResponse(any());
         }
     }
 
-    // ===== Тесты getAllUsers =====
-
     @Test
-    @DisplayName("getAllUsers должен вернуть список всех пользователей")
     void shouldReturnAllUsers() {
-        // given
-        User user2 = User.builder().id(2L).name("Мария").email("maria@test.com").age(28).build();
-        UserResponse response2 = UserResponse.builder().id(2L).name("Мария").email("maria@test.com").age(28).build();
 
-        when(userRepository.findAll()).thenReturn(List.of(testUser, user2));
-        when(userMapper.toResponse(testUser)).thenReturn(testResponse);
-        when(userMapper.toResponse(user2)).thenReturn(response2);
+        User user2 =
+                User.builder()
+                        .id(2L)
+                        .name("Мария")
+                        .email(
+                                "maria@test.com"
+                        )
+                        .age(28)
+                        .build();
 
-        // when
-        List<UserResponse> result = userService.getAllUsers();
+        UserResponse response2 =
+                UserResponse.builder()
+                        .id(2L)
+                        .name("Мария")
+                        .email(
+                                "maria@test.com"
+                        )
+                        .age(28)
+                        .build();
 
-        // then
-        assertThat(result).hasSize(2);
-        assertThat(result).extracting(UserResponse::getName)
-                .containsExactlyInAnyOrder("Иван", "Мария");
-        verify(userRepository).findAll();
+        when(
+                userRepository.findAll()
+        ).thenReturn(
+                List.of(
+                        testUser,
+                        user2
+                )
+        );
+
+        when(
+                userMapper.toResponse(
+                        testUser
+                )
+        ).thenReturn(testResponse);
+
+        when(
+                userMapper.toResponse(
+                        user2
+                )
+        ).thenReturn(response2);
+
+        List<UserResponse> result =
+                userService.getAllUsers();
+
+        assertThat(result)
+                .hasSize(2);
+
+        assertThat(result)
+                .extracting(
+                        UserResponse::getName
+                )
+                .containsExactlyInAnyOrder(
+                        "Иван",
+                        "Мария"
+                );
     }
 
     @Test
-    @DisplayName("getAllUsers должен вернуть пустой список, если пользователей нет")
     void shouldReturnEmptyListWhenNoUsers() {
-        // given
-        when(userRepository.findAll()).thenReturn(List.of());
 
-        // when
-        List<UserResponse> result = userService.getAllUsers();
+        when(
+                userRepository.findAll()
+        ).thenReturn(
+                List.of()
+        );
 
-        // then
-        assertThat(result).isEmpty();
+        List<UserResponse> result =
+                userService.getAllUsers();
+
+        assertThat(result)
+                .isEmpty();
     }
-
-    // ===== Тесты updateUser =====
 
     @Nested
     @DisplayName("updateUser")
     class UpdateUserTests {
 
         @Test
-        @DisplayName("Должен обновить существующего пользователя")
         void shouldUpdateUserSuccessfully() {
-            // given
-            UserRequest updateRequest = new UserRequest();
-            updateRequest.setName("Иван Петров");
-            updateRequest.setEmail("ivan@test.com");
+
+            UserRequest updateRequest =
+                    new UserRequest();
+
+            updateRequest.setName(
+                    "Иван Петров"
+            );
+
+            updateRequest.setEmail(
+                    "ivan@test.com"
+            );
+
             updateRequest.setAge(26);
 
-            User updatedUser = User.builder()
-                    .id(1L).name("Иван Петров").email("ivan@test.com").age(26).build();
-            UserResponse updatedResponse = UserResponse.builder()
-                    .id(1L).name("Иван Петров").email("ivan@test.com").age(26).build();
+            User updatedUser =
+                    User.builder()
+                            .id(1L)
+                            .name(
+                                    "Иван Петров"
+                            )
+                            .email(
+                                    "ivan@test.com"
+                            )
+                            .age(26)
+                            .build();
 
-            when(userRepository.findById(1L)).thenReturn(Optional.of(testUser));
-            doNothing().when(userMapper).updateEntityFromRequest(updateRequest, testUser);
-            when(userRepository.save(testUser)).thenReturn(updatedUser);
-            when(userMapper.toResponse(updatedUser)).thenReturn(updatedResponse);
+            UserResponse updatedResponse =
+                    UserResponse.builder()
+                            .id(1L)
+                            .name(
+                                    "Иван Петров"
+                            )
+                            .email(
+                                    "ivan@test.com"
+                            )
+                            .age(26)
+                            .build();
 
-            // when
-            UserResponse result = userService.updateUser(1L, updateRequest);
+            when(
+                    userRepository.findById(
+                            1L
+                    )
+            ).thenReturn(
+                    Optional.of(testUser)
+            );
 
-            // then
-            assertThat(result.getName()).isEqualTo("Иван Петров");
-            assertThat(result.getAge()).isEqualTo(26);
+            when(
+                    userRepository.save(
+                            testUser
+                    )
+            ).thenReturn(
+                    updatedUser
+            );
 
-            verify(userMapper).updateEntityFromRequest(updateRequest, testUser);
-            verify(userRepository).save(testUser);
+            when(
+                    userMapper.toResponse(
+                            updatedUser
+                    )
+            ).thenReturn(
+                    updatedResponse
+            );
+
+            UserResponse result =
+                    userService.updateUser(
+                            1L,
+                            updateRequest
+                    );
+
+            assertThat(result.getName())
+                    .isEqualTo(
+                            "Иван Петров"
+                    );
+
+            assertThat(result.getAge())
+                    .isEqualTo(26);
+
+            verify(userMapper)
+                    .updateEntityFromRequest(
+                            updateRequest,
+                            testUser
+                    );
+
+            verify(userRepository)
+                    .save(testUser);
         }
 
         @Test
-        @DisplayName("Должен выбросить исключение при обновлении несуществующего пользователя")
         void shouldThrowExceptionWhenUpdatingNonExistentUser() {
-            // given
-            when(userRepository.findById(999L)).thenReturn(Optional.empty());
 
-            // when & then
-            assertThatThrownBy(() -> userService.updateUser(999L, testRequest))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("Пользователь не найден");
+            when(
+                    userRepository.findById(
+                            999L
+                    )
+            ).thenReturn(
+                    Optional.empty()
+            );
 
-            verify(userMapper, never()).updateEntityFromRequest(any(), any());
-            verify(userRepository, never()).save(any());
+            assertThatThrownBy(
+                    () ->
+                            userService.updateUser(
+                                    999L,
+                                    testRequest
+                            )
+            )
+                    .isInstanceOf(
+                            RuntimeException.class
+                    )
+                    .hasMessageContaining(
+                            "Пользователь не найден"
+                    );
+
+            verify(
+                    userMapper,
+                    never()
+            ).updateEntityFromRequest(
+                    any(),
+                    any()
+            );
+
+            verify(
+                    userRepository,
+                    never()
+            ).save(any());
         }
     }
-
-    // ===== Тесты deleteUser =====
 
     @Nested
     @DisplayName("deleteUser")
     class DeleteUserTests {
 
         @Test
-        @DisplayName("Должен удалить существующего пользователя")
         void shouldDeleteExistingUser() {
-            // given
-            when(userRepository.existsById(1L)).thenReturn(true);
-            doNothing().when(userRepository).deleteById(1L);
 
-            // when
+            when(
+                    userRepository.findById(
+                            1L
+                    )
+            ).thenReturn(
+                    Optional.of(testUser)
+            );
+
             userService.deleteUser(1L);
 
-            // then
-            verify(userRepository).existsById(1L);
-            verify(userRepository).deleteById(1L);
+            verify(userRepository)
+                    .findById(1L);
+
+            verify(userRepository)
+                    .deleteById(1L);
+
+            verify(kafkaProducer)
+                    .sendEvent(
+                            new UserEvent(
+                                    "DELETE",
+                                    "ivan@test.com"
+                            )
+                    );
         }
 
         @Test
-        @DisplayName("Должен выбросить исключение при удалении несуществующего пользователя")
         void shouldThrowExceptionWhenDeletingNonExistentUser() {
-            // given
-            when(userRepository.existsById(999L)).thenReturn(false);
 
-            // when & then
-            assertThatThrownBy(() -> userService.deleteUser(999L))
-                    .isInstanceOf(RuntimeException.class)
-                    .hasMessageContaining("Пользователь не найден");
+            when(
+                    userRepository.findById(
+                            999L
+                    )
+            ).thenReturn(
+                    Optional.empty()
+            );
 
-            verify(userRepository, never()).deleteById(anyLong());
+            assertThatThrownBy(
+                    () ->
+                            userService.deleteUser(
+                                    999L
+                            )
+            )
+                    .isInstanceOf(
+                            RuntimeException.class
+                    )
+                    .hasMessageContaining(
+                            "Пользователь не найден"
+                    );
+
+            verify(
+                    userRepository,
+                    never()
+            ).deleteById(
+                    any()
+            );
+
+            verify(
+                    kafkaProducer,
+                    never()
+            ).sendEvent(
+                    any()
+            );
         }
     }
 }
